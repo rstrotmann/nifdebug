@@ -30,11 +30,6 @@
 #' @return A Shiny app object.
 #' @export
 #' @seealso [nif::plot.nif()], [nif::nif_viewer()]
-#'
-#' @examples
-#' \dontrun{
-#' debug_plot(examplinib_sad_nif, examplinib_sad)
-#' }
 debug_plot <- function(
     nif,
     sdtm,
