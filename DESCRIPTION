@@ -1,0 +1,18 @@
+Package: nifdebug
+Type: Package
+Title: Debug Nonmem Input Format Data Sets Created With The NIF Package.
+Version: 0.1.0
+Authors@R: person("Rainer", "Strotmann", email = "rainer.strotmann@mailbox.org", role = c("aut", "cre"))
+Description: More about what it does (maybe more than one line).
+    Continuation lines should be indented.
+License: MIT + file LICENSE
+Imports:
+    dplyr,
+    tidyselect,
+    ggplot2,
+    nif
+Encoding: UTF-8
+LazyData: true
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
