@@ -20,7 +20,8 @@ nif_debug(
   lines = TRUE,
   size = 2,
   alpha = 1,
-  scales = "fixed"
+  scales = "fixed",
+  base_size = 16
 )
 }
 \arguments{
@@ -56,6 +57,8 @@ or 'TAD'.}
 \item{alpha}{The `alpha` parameter to [ggplot2::geom_point()], as numeric.}
 
 \item{scales}{The `scales` parameter to [ggplot2::facet_wrap()].}
+
+\item{base_size}{Base font size as numeric.}
 }
 \value{
 A Shiny app object.

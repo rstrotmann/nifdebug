@@ -26,6 +26,7 @@
 #' @param size The `size` parameter to [ggplot2::geom_point()], as numeric.
 #' @param alpha The `alpha` parameter to [ggplot2::geom_point()], as numeric.
 #' @param scales The `scales` parameter to [ggplot2::facet_wrap()].
+#' @param base_size Base font size as numeric.
 #'
 #' @return A Shiny app object.
 #' @export
@@ -46,7 +47,8 @@ nif_debug <- function(
     lines = TRUE,
     size = 2,
     alpha = 1,
-    scales = "fixed"
+    scales = "fixed",
+    base_size = 16
 ) {
   if (!inherits(nif, "nif")) {
     stop("'nif' must be a nif object")
@@ -242,7 +244,7 @@ nif_debug <- function(
       }
 
       p <- p +
-        ggplot2::theme_bw() +
+        ggplot2::theme_bw(base_size) +
         ggplot2::theme(
           legend.position = if (length(plot_data_set$color) > 0) {
             "bottom"
