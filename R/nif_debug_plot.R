@@ -30,7 +30,7 @@
 #' @return A Shiny app object.
 #' @export
 #' @seealso [nif::plot.nif()], [nif::nif_viewer()]
-debug_plot <- function(
+nif_debug <- function(
     nif,
     sdtm,
     analyte = NULL,
