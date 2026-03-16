@@ -90,6 +90,17 @@ nif_debug <- function(
     dplyr::filter(.data$EVID == 0) |>
     dplyr::filter(!is.na(.data$DV))
 
+  time_choices <- intersect(
+    c("TIME", "TAFD", "TAD", "NTIME"), names(obs_data)
+  )
+  default_time <- if (time %in% time_choices && length(time_choices) > 0) {
+    time
+  } else if (length(time_choices) > 0) {
+    time_choices[1]
+  } else {
+    time
+  }
+
   analyte_values <- unique(obs_data$ANALYTE)
   y_label <- ifelse(length(analyte_values) == 1, analyte_values, "DV")
   if (isTRUE(dose_norm)) y_label <- paste0(y_label, " / DOSE")
@@ -193,6 +204,14 @@ nif_debug <- function(
           selected = analyte_values, inline = TRUE
         )
       ),
+      shiny::column(
+        3,
+        shiny::selectInput(
+          "time_metric", "Time metric",
+          choices = time_choices,
+          selected = default_time
+        )
+      ),
       shiny::column(3, shiny::checkboxInput("log_y", "Logarithmic y axis", value = log)),
       shiny::column(3, shiny::checkboxInput("show_lines", "Show lines", value = lines))
     ),
@@ -240,10 +259,12 @@ nif_debug <- function(
     })
 
     output$main_plot <- shiny::renderPlot({
+      shiny::req(input$time_metric)
+
       p <- obs_data_r() |>
-        dplyr::arrange(.data$GROUP, .data$active_time) |>
+        dplyr::arrange(.data$GROUP, .data[[input$time_metric]]) |>
         ggplot2::ggplot(ggplot2::aes(
-          x = .data$active_time,
+          x = .data[[input$time_metric]],
           y = .data$DV,
           group = .data$GROUP,
           color = .data$COLOR
@@ -286,7 +307,7 @@ nif_debug <- function(
         ) +
         ggplot2::ggtitle(plot_title) +
         ggplot2::labs(
-          x = time, y = y_label,
+          x = input$time_metric, y = y_label,
           color = nice_enumeration(plot_data_set$color)
         )
 
@@ -322,7 +343,7 @@ nif_debug <- function(
     shiny::observeEvent(input$plot_click, {
       clicked <- shiny::nearPoints(
         obs_data_r(), input$plot_click,
-        xvar = "active_time", yvar = "DV",
+        xvar = input$time_metric, yvar = "DV",
         threshold = 10, maxpoints = 1
       )
 
@@ -351,7 +372,8 @@ nif_debug <- function(
         selected_info(paste0(
           "Subject ", clicked$USUBJID[1],
           " | ", clicked$ANALYTE[1],
-          " | ", time, " = ", round(clicked$active_time[1], 2),
+          " | ", input$time_metric, " = ",
+          round(clicked[[input$time_metric]][1], 2),
           " | DV = ", round(clicked$DV[1], 4),
           " | Source: IMPORT"
         ))
@@ -402,7 +424,8 @@ nif_debug <- function(
         selected_info(paste0(
           "Subject ", clicked$USUBJID[1],
           " | ", clicked$ANALYTE[1],
-          " | ", time, " = ", round(clicked$active_time[1], 2),
+          " | ", input$time_metric, " = ",
+          round(clicked[[input$time_metric]][1], 2),
           " | DV = ", round(clicked$DV[1], 4),
           " | Source: ", src_domain, " (", result$seq_col, " = ", src_seq, ")"
         ))
