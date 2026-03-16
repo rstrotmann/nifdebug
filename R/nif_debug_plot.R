@@ -63,9 +63,6 @@ nif_debug <- function(
   nif:::validate_argument(dose_norm, "logical")
   nif:::validate_argument(lines, "logical")
 
-  # if (!inherits(nif, "nif")) {
-  #   stop("'nif' must be a nif object")
-  # }
   if (!inherits(sdtm, "sdtm")) {
     stop("'sdtm' must be a sdtm object")
   }
@@ -144,8 +141,10 @@ nif_debug <- function(
     render_highlight_table(df, hl)
   }
 
-  lookup_domain_neighbors <- function(sdtm_obj, domain_name, usubjid,
-                                      target_seq, analyte = NULL) {
+
+  lookup_domain_neighbors <- function(
+      sdtm_obj, domain_name, usubjid, target_seq, analyte = NULL
+  ) {
     src_data <- domain(sdtm_obj, tolower(domain_name))
     seq_col <- paste0(toupper(domain_name), "SEQ")
     testcd_col <- paste0(toupper(domain_name), "TESTCD")
@@ -381,9 +380,11 @@ nif_debug <- function(
       }
 
       tryCatch({
-        result <- lookup_domain_neighbors(sdtm, src_domain,
-                                          clicked$USUBJID[1], src_seq,
-                                          clicked$ANALYTE[1])
+        result <- lookup_domain_neighbors(
+          sdtm, src_domain,
+          clicked$USUBJID[1], src_seq,
+          clicked$ANALYTE[1]
+        )
 
         if (is.null(result$data)) {
           selected_source(
