@@ -7,7 +7,7 @@
 #' dropdown menus.
 #'
 #' @param nif A nif object.
-#' @inheritParams plot.nif
+#' @inheritParams nif::plot.nif
 #'
 #' @return A Shiny app object.
 #' @export
