@@ -143,7 +143,7 @@ nif_debug <- function(
 
 
   lookup_domain_neighbors <- function(
-      sdtm_obj, domain_name, usubjid, target_seq, analyte = NULL
+      sdtm_obj, domain_name, usubjid, target_seq, src_testcd = NULL
   ) {
     src_data <- domain(sdtm_obj, tolower(domain_name))
     seq_col <- paste0(toupper(domain_name), "SEQ")
@@ -157,8 +157,8 @@ nif_debug <- function(
     if ("USUBJID" %in% names(src_data)) {
       subj_data <- subj_data[subj_data$USUBJID == usubjid, , drop = FALSE]
     }
-    if (!is.null(analyte) && testcd_col %in% names(subj_data)) {
-      subj_data <- subj_data[subj_data[[testcd_col]] == analyte, , drop = FALSE]
+    if (!is.null(src_testcd) && testcd_col %in% names(subj_data)) {
+      subj_data <- subj_data[subj_data[[testcd_col]] == src_testcd, , drop = FALSE]
     }
     subj_data <- subj_data[order(subj_data[[seq_col]]), , drop = FALSE]
 
@@ -383,7 +383,7 @@ nif_debug <- function(
         result <- lookup_domain_neighbors(
           sdtm, src_domain,
           clicked$USUBJID[1], src_seq,
-          clicked$ANALYTE[1]
+          clicked$SRC_TESTCD[1]
         )
 
         if (is.null(result$data)) {
@@ -418,8 +418,11 @@ nif_debug <- function(
       tryCatch({
         ex_seq <- find_related_ex(clicked[1, , drop = FALSE])
         if (!is.null(ex_seq) && has_domain(sdtm, "ex")) {
-          ex_result <- lookup_domain_neighbors(sdtm, "EX",
-                                               clicked$USUBJID[1], ex_seq)
+          ex_result <- lookup_domain_neighbors(
+            sdtm, "EX",
+            clicked$USUBJID[1], ex_seq,
+            src_testcd = NULL
+          )
           selected_ex(ex_result$data)
           selected_ex_seq(ex_seq)
         } else {
