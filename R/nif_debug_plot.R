@@ -83,12 +83,6 @@ nif_debug <- function(
 
   plot_data <- plot_data_set$data
 
-  if (isTRUE(log)) {
-    plot_data <- dplyr::mutate(
-      plot_data, DV = dplyr::case_when(.data$DV == 0 ~ NA, .default = .data$DV)
-    )
-  }
-
   plot_data <- plot_data |>
     tidyr::unite("GROUP", dplyr::any_of(
       c(plot_data_set$group, plot_data_set$color, plot_data_set$facet)),
@@ -151,9 +145,10 @@ nif_debug <- function(
   }
 
   lookup_domain_neighbors <- function(sdtm_obj, domain_name, usubjid,
-                                      target_seq) {
+                                      target_seq, analyte = NULL) {
     src_data <- domain(sdtm_obj, tolower(domain_name))
     seq_col <- paste0(toupper(domain_name), "SEQ")
+    testcd_col <- paste0(toupper(domain_name), "TESTCD")
 
     if (!seq_col %in% names(src_data)) {
       return(list(data = NULL, seq_col = seq_col, seq_val = target_seq))
@@ -161,7 +156,10 @@ nif_debug <- function(
 
     subj_data <- src_data
     if ("USUBJID" %in% names(src_data)) {
-      subj_data <- src_data[src_data$USUBJID == usubjid, , drop = FALSE]
+      subj_data <- subj_data[subj_data$USUBJID == usubjid, , drop = FALSE]
+    }
+    if (!is.null(analyte) && testcd_col %in% names(subj_data)) {
+      subj_data <- subj_data[subj_data[[testcd_col]] == analyte, , drop = FALSE]
     }
     subj_data <- subj_data[order(subj_data[[seq_col]]), , drop = FALSE]
 
@@ -188,6 +186,17 @@ nif_debug <- function(
        .sdtm-table td, .sdtm-table th { padding: 4px 8px; }"
     )),
     shiny::h3("NIF debug plot"),
+    shiny::fluidRow(
+      shiny::column(
+        6,
+        shiny::checkboxGroupInput(
+          "analytes", "Analytes", choices = analyte_values,
+          selected = analyte_values, inline = TRUE
+        )
+      ),
+      shiny::column(3, shiny::checkboxInput("log_y", "Logarithmic y axis", value = log)),
+      shiny::column(3, shiny::checkboxInput("show_lines", "Show lines", value = lines))
+    ),
     shiny::plotOutput("main_plot", click = "plot_click", height = "500px"),
     shiny::hr(),
     shiny::h4("Selected observation"),
@@ -221,8 +230,18 @@ nif_debug <- function(
     selected_nif_rows <- shiny::reactiveVal(NULL)
     selected_nif_highlight <- shiny::reactiveVal(NULL)
 
+    obs_data_r <- shiny::reactive({
+      d <- dplyr::filter(obs_data, .data$ANALYTE %in% input$analytes)
+      if (isTRUE(input$log_y)) {
+        d <- dplyr::mutate(
+          d, DV = dplyr::case_when(.data$DV == 0 ~ NA, .default = .data$DV)
+        )
+      }
+      d
+    })
+
     output$main_plot <- shiny::renderPlot({
-      p <- obs_data |>
+      p <- obs_data_r() |>
         dplyr::arrange(.data$GROUP, .data$active_time) |>
         ggplot2::ggplot(ggplot2::aes(
           x = .data$active_time,
@@ -231,7 +250,7 @@ nif_debug <- function(
           color = .data$COLOR
         ))
 
-      if (isTRUE(lines)) {
+      if (isTRUE(input$show_lines)) {
         p <- p + ggplot2::geom_line(na.rm = TRUE)
       }
 
@@ -253,7 +272,7 @@ nif_debug <- function(
         }
       }
 
-      if (isTRUE(log)) {
+      if (isTRUE(input$log_y)) {
         p <- p + ggplot2::scale_y_log10()
       }
 
@@ -303,7 +322,7 @@ nif_debug <- function(
 
     shiny::observeEvent(input$plot_click, {
       clicked <- shiny::nearPoints(
-        obs_data, input$plot_click,
+        obs_data_r(), input$plot_click,
         xvar = "active_time", yvar = "DV",
         threshold = 10, maxpoints = 1
       )
@@ -363,7 +382,8 @@ nif_debug <- function(
 
       tryCatch({
         result <- lookup_domain_neighbors(sdtm, src_domain,
-                                          clicked$USUBJID[1], src_seq)
+                                          clicked$USUBJID[1], src_seq,
+                                          clicked$ANALYTE[1])
 
         if (is.null(result$data)) {
           selected_source(
