@@ -50,12 +50,26 @@ nif_debug <- function(
     scales = "fixed",
     base_size = 16
 ) {
-  if (!inherits(nif, "nif")) {
-    stop("'nif' must be a nif object")
-  }
+  # input validation
+  nif:::validate_nif(nif)
+  nif:::validate_argument(analyte, "character", allow_null = TRUE)
+  nif:::validate_argument(analyte, "character", allow_null = TRUE)
+  nif:::validate_argument(time, "character")
+  nif:::validate_argument(color, "character", allow_null = TRUE)
+  nif:::validate_argument(facet, "character", allow_null = TRUE)
+  nif:::validate_argument(min_time, "numeric", allow_null = TRUE)
+  nif:::validate_argument(max_time, "numeric", allow_null = TRUE)
+  nif:::validate_argument(cfb, "logical")
+  nif:::validate_argument(dose_norm, "logical")
+  nif:::validate_argument(lines, "logical")
+
+  # if (!inherits(nif, "nif")) {
+  #   stop("'nif' must be a nif object")
+  # }
   if (!inherits(sdtm, "sdtm")) {
     stop("'sdtm' must be a sdtm object")
   }
+
   if (!all(c("SRC_DOMAIN", "SRC_SEQ") %in% names(nif))) {
     stop(
       "NIF object must contain SRC_DOMAIN and SRC_SEQ columns. ",
@@ -63,7 +77,7 @@ nif_debug <- function(
     )
   }
 
-  plot_data_set <- make_plot_data_set(
+  plot_data_set <- nif::make_plot_data_set(
     nif, analyte, dose, time, color, min_time, max_time, cfb, dose_norm, facet
   )
 
