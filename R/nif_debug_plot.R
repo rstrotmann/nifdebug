@@ -111,7 +111,7 @@ nif_debug <- function(
     plot_title <- paste0(plot_title, " by ", plot_data_set$facet)
   }
 
-  render_highlight_table <- function(df, highlight_rows = NULL) {
+  render_highlight_table <- function(df, highlight_rows = NULL, admin_rows = NULL) {
     header <- paste0(
       "<tr>",
       paste0("<th>", htmltools::htmlEscape(names(df)), "</th>", collapse = ""),
@@ -119,9 +119,11 @@ nif_debug <- function(
     )
 
     if (is.null(highlight_rows)) highlight_rows <- rep(FALSE, nrow(df))
+    if (is.null(admin_rows)) admin_rows <- rep(FALSE, nrow(df))
 
     rows <- vapply(seq_len(nrow(df)), function(i) {
-      cls <- if (highlight_rows[i]) ' class="highlight-row"' else ""
+      classes <- c(if (highlight_rows[i]) "highlight-row", if (admin_rows[i]) "admin-row")
+      cls <- if (length(classes)) paste0(' class="', paste(classes, collapse = " "), '"') else ""
       cells <- paste0(
         "<td>",
         vapply(df[i, ], function(v) {
@@ -192,6 +194,7 @@ nif_debug <- function(
     shiny::tags$style(shiny::HTML(
       ".highlight-row { background-color: #fff3cd !important;
          font-weight: bold; }
+       .admin-row { font-weight: bold; color: #0066cc !important; }
        .sdtm-table table { font-size: 12px; }
        .sdtm-table td, .sdtm-table th { padding: 4px 8px; }"
     )),
@@ -459,23 +462,25 @@ nif_debug <- function(
       })
 
       tryCatch({
-        subj_nif <- nif[nif$USUBJID == clicked$USUBJID[1] &
-                          nif$EVID == 0, , drop = FALSE]
+        subj_nif <- nif[nif$USUBJID == clicked$USUBJID[1], , drop = FALSE]
         subj_nif <- subj_nif[order(subj_nif$TIME), , drop = FALSE]
 
         match_idx <- which(
-          !is.na(subj_nif$SRC_DOMAIN) & subj_nif$SRC_DOMAIN == src_domain &
+          subj_nif$EVID == 0 &
+            !is.na(subj_nif$SRC_DOMAIN) & subj_nif$SRC_DOMAIN == src_domain &
             !is.na(subj_nif$SRC_SEQ) & subj_nif$SRC_SEQ == src_seq &
             subj_nif$ANALYTE == clicked$ANALYTE[1]
         )
 
         if (length(match_idx) > 0) {
           idx <- match_idx[1]
-          neighbor_idx <- seq(max(1, idx - 1),
-                              min(nrow(subj_nif), idx + 1))
+          obs_time <- subj_nif$TIME[idx]
+          admin_idx <- which(subj_nif$EVID == 1 & subj_nif$TIME <= obs_time)
+          start_idx <- if (length(admin_idx) > 0) max(admin_idx) else 1L
+          neighbor_idx <- seq(start_idx, idx)
           nif_subset <- subj_nif[neighbor_idx, , drop = FALSE]
           hl <- rep(FALSE, length(neighbor_idx))
-          hl[which(neighbor_idx == idx)] <- TRUE
+          hl[length(neighbor_idx)] <- TRUE
           selected_nif_rows(nif_subset)
           selected_nif_highlight(hl)
         } else {
@@ -526,12 +531,14 @@ nif_debug <- function(
       nif_data <- selected_nif_rows()
       if (is.null(nif_data)) return(NULL)
 
+      admin_rows <- if ("EVID" %in% names(nif_data)) nif_data$EVID == 1 else rep(FALSE, nrow(nif_data))
+
       shiny::tagList(
         shiny::hr(),
         shiny::h4("NIF record"),
         shiny::div(
           class = "sdtm-table",
-          render_highlight_table(nif_data, selected_nif_highlight())
+          render_highlight_table(nif_data, selected_nif_highlight(), admin_rows)
         )
       )
     })
