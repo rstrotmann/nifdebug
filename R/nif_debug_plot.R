@@ -29,6 +29,8 @@
 #' @param base_size Base font size as numeric.
 #'
 #' @return A Shiny app object.
+#' @import nif
+#' @import shiny
 #' @export
 #' @seealso [nif::plot.nif()], [nif::nif_viewer()]
 nif_debug <- function(
@@ -105,7 +107,7 @@ nif_debug <- function(
   y_label <- ifelse(length(analyte_values) == 1, analyte_values, "DV")
   if (isTRUE(dose_norm)) y_label <- paste0(y_label, " / DOSE")
 
-  plot_title <- nice_enumeration(analyte_values)
+  plot_title <- nif::nice_enumeration(analyte_values)
   if (isTRUE(cfb)) plot_title <- paste0(plot_title, " change from baseline")
   if ("FACET" %in% names(obs_data) && length(unique(obs_data$FACET)) > 1) {
     plot_title <- paste0(plot_title, " by ", plot_data_set$facet)
@@ -311,7 +313,7 @@ nif_debug <- function(
         ggplot2::ggtitle(plot_title) +
         ggplot2::labs(
           x = input$time_metric, y = y_label,
-          color = nice_enumeration(plot_data_set$color)
+          color = nif::nice_enumeration(plot_data_set$color)
         )
 
       suppressWarnings(p)

@@ -10,6 +10,9 @@
 #' @inheritParams nif::plot.nif
 #'
 #' @return A Shiny app object.
+#' @import nif
+#' @import shiny
+#' @import dplyr
 #' @export
 #'
 #' @examples
@@ -49,7 +52,7 @@ debug_time_plot <- function(
   nif:::validate_argument(legend, "logical")
   nif:::validate_argument(scales, "character")
 
-  plot_data_set <- nif:::make_plot_data_set(
+  plot_data_set <- nif::make_plot_data_set(
     nif, analyte, dose, time = "TAFD", color, min_time, max_time,
     facet = facet
   )
