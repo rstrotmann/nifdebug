@@ -55,7 +55,6 @@ nif_debug <- function(
   # input validation
   nif:::validate_nif(nif)
   nif:::validate_argument(analyte, "character", allow_null = TRUE)
-  nif:::validate_argument(analyte, "character", allow_null = TRUE)
   nif:::validate_argument(time, "character")
   nif:::validate_argument(color, "character", allow_null = TRUE)
   nif:::validate_argument(facet, "character", allow_null = TRUE)
@@ -253,6 +252,27 @@ nif_debug <- function(
     selected_nif_rows <- shiny::reactiveVal(NULL)
     selected_nif_highlight <- shiny::reactiveVal(NULL)
 
+    reset_all <- function() {
+      selected_point(NULL)
+      selected_source(NULL)
+      selected_seq(NULL)
+      selected_info("")
+      selected_ex(NULL)
+      selected_ex_seq(NULL)
+      selected_nif_rows(NULL)
+      selected_nif_highlight(NULL)
+    }
+
+    reset_details <- function() {
+      selected_source(NULL)
+      selected_seq(NULL)
+      selected_info("")
+      selected_ex(NULL)
+      selected_ex_seq(NULL)
+      selected_nif_rows(NULL)
+      selected_nif_highlight(NULL)
+    }
+
     obs_data_r <- shiny::reactive({
       d <- dplyr::filter(obs_data, .data$ANALYTE %in% input$analytes)
       if (isTRUE(input$log_y)) {
@@ -263,19 +283,17 @@ nif_debug <- function(
       d
     })
 
-    output$main_plot <- shiny::renderPlot({
-      shiny::req(input$time_metric)
-
+    build_main_plot <- function(time_metric, show_lines, log_y) {
       p <- obs_data_r() |>
-        dplyr::arrange(.data$GROUP, .data[[input$time_metric]]) |>
+        dplyr::arrange(.data$GROUP, .data[[time_metric]]) |>
         ggplot2::ggplot(ggplot2::aes(
-          x = .data[[input$time_metric]],
+          x = .data[[time_metric]],
           y = .data$DV,
           group = .data$GROUP,
           color = .data$COLOR
         ))
 
-      if (isTRUE(input$show_lines)) {
+      if (isTRUE(show_lines)) {
         p <- p + ggplot2::geom_line(na.rm = TRUE)
       }
 
@@ -297,7 +315,7 @@ nif_debug <- function(
         }
       }
 
-      if (isTRUE(input$log_y)) {
+      if (isTRUE(log_y)) {
         p <- p + ggplot2::scale_y_log10()
       }
 
@@ -312,11 +330,21 @@ nif_debug <- function(
         ) +
         ggplot2::ggtitle(plot_title) +
         ggplot2::labs(
-          x = input$time_metric, y = y_label,
+          x = time_metric,
+          y = y_label,
           color = nif::nice_enumeration(plot_data_set$color)
         )
 
       suppressWarnings(p)
+    }
+
+    output$main_plot <- shiny::renderPlot({
+      shiny::req(input$time_metric)
+      build_main_plot(
+        time_metric = input$time_metric,
+        show_lines = input$show_lines,
+        log_y = input$log_y
+      )
     })
 
     find_related_ex <- function(clicked_row) {
@@ -345,72 +373,12 @@ nif_debug <- function(
       closest_admin$SRC_SEQ[1]
     }
 
-    shiny::observeEvent(input$plot_click, {
-      clicked <- shiny::nearPoints(
-        obs_data_r(), input$plot_click,
-        xvar = input$time_metric, yvar = "DV",
-        threshold = 10, maxpoints = 1
-      )
-
-      if (nrow(clicked) == 0) {
-        selected_point(NULL)
-        selected_source(NULL)
-        selected_seq(NULL)
-        selected_info("")
-        selected_ex(NULL)
-        selected_ex_seq(NULL)
-        selected_nif_rows(NULL)
-        selected_nif_highlight(NULL)
-        return()
-      }
-
-      selected_point(clicked[1, , drop = FALSE])
-
-      src_domain <- clicked$SRC_DOMAIN[1]
-      src_seq <- clicked$SRC_SEQ[1]
-
-      if (is.na(src_domain) || src_domain == "IMPORT") {
-        selected_source(
-          data.frame(Note = "Source: imported data (no SDTM source record)")
-        )
-        selected_seq(NULL)
-        selected_info(paste0(
-          "Subject ", clicked$USUBJID[1],
-          " | ", clicked$ANALYTE[1],
-          " | ", input$time_metric, " = ",
-          round(clicked[[input$time_metric]][1], 2),
-          " | DV = ", round(clicked$DV[1], 4),
-          " | Source: IMPORT"
-        ))
-        selected_ex(NULL)
-        selected_ex_seq(NULL)
-        selected_nif_rows(NULL)
-        selected_nif_highlight(NULL)
-        return()
-      }
-
-      if (is.na(src_seq)) {
-        selected_source(
-          data.frame(Note = "SRC_SEQ is NA; cannot look up source record.")
-        )
-        selected_seq(NULL)
-        selected_info(paste0(
-          "Subject ", clicked$USUBJID[1],
-          " | ", clicked$ANALYTE[1],
-          " | Domain: ", src_domain
-        ))
-        selected_ex(NULL)
-        selected_ex_seq(NULL)
-        selected_nif_rows(NULL)
-        selected_nif_highlight(NULL)
-        return()
-      }
-
+    apply_source_lookup <- function(clicked_row, src_domain, src_seq) {
       tryCatch({
         result <- lookup_domain_neighbors(
           sdtm, src_domain,
-          clicked$USUBJID[1], src_seq,
-          clicked$SRC_TESTCD[1]
+          clicked_row$USUBJID[1], src_seq,
+          clicked_row$SRC_TESTCD[1]
         )
 
         if (is.null(result$data)) {
@@ -427,28 +395,29 @@ nif_debug <- function(
         }
 
         selected_info(paste0(
-          "Subject ", clicked$USUBJID[1],
-          " | ", clicked$ANALYTE[1],
+          "Subject ", clicked_row$USUBJID[1],
+          " | ", clicked_row$ANALYTE[1],
           " | ", input$time_metric, " = ",
-          round(clicked[[input$time_metric]][1], 2),
-          " | DV = ", round(clicked$DV[1], 4),
+          round(clicked_row[[input$time_metric]][1], 2),
+          " | DV = ", round(clicked_row$DV[1], 4),
           " | Source: ", src_domain, " (", result$seq_col, " = ", src_seq, ")"
         ))
-      },
-      error = function(e) {
+      }, error = function(e) {
         selected_source(
           data.frame(Note = paste0("Error looking up source: ", e$message))
         )
         selected_seq(NULL)
         selected_info(paste0("Domain: ", src_domain, " (lookup failed)"))
       })
+    }
 
+    apply_ex_lookup <- function(clicked_row) {
       tryCatch({
-        ex_seq <- find_related_ex(clicked[1, , drop = FALSE])
+        ex_seq <- find_related_ex(clicked_row)
         if (!is.null(ex_seq) && has_domain(sdtm, "ex")) {
           ex_result <- lookup_domain_neighbors(
             sdtm, "EX",
-            clicked$USUBJID[1], ex_seq,
+            clicked_row$USUBJID[1], ex_seq,
             src_testcd = NULL
           )
           selected_ex(ex_result$data)
@@ -457,21 +426,22 @@ nif_debug <- function(
           selected_ex(NULL)
           selected_ex_seq(NULL)
         }
-      },
-      error = function(e) {
+      }, error = function(e) {
         selected_ex(NULL)
         selected_ex_seq(NULL)
       })
+    }
 
+    apply_nif_highlight <- function(clicked_row, src_domain, src_seq) {
       tryCatch({
-        subj_nif <- nif[nif$USUBJID == clicked$USUBJID[1], , drop = FALSE]
+        subj_nif <- nif[nif$USUBJID == clicked_row$USUBJID[1], , drop = FALSE]
         subj_nif <- subj_nif[order(subj_nif$TIME), , drop = FALSE]
 
         match_idx <- which(
           subj_nif$EVID == 0 &
             !is.na(subj_nif$SRC_DOMAIN) & subj_nif$SRC_DOMAIN == src_domain &
             !is.na(subj_nif$SRC_SEQ) & subj_nif$SRC_SEQ == src_seq &
-            subj_nif$ANALYTE == clicked$ANALYTE[1]
+            subj_nif$ANALYTE == clicked_row$ANALYTE[1]
         )
 
         if (length(match_idx) > 0) {
@@ -489,11 +459,62 @@ nif_debug <- function(
           selected_nif_rows(NULL)
           selected_nif_highlight(NULL)
         }
-      },
-      error = function(e) {
+      }, error = function(e) {
         selected_nif_rows(NULL)
         selected_nif_highlight(NULL)
       })
+    }
+
+    shiny::observeEvent(input$plot_click, {
+      clicked <- shiny::nearPoints(
+        obs_data_r(), input$plot_click,
+        xvar = input$time_metric, yvar = "DV",
+        threshold = 10, maxpoints = 1
+      )
+
+      if (nrow(clicked) == 0) {
+        reset_all()
+        return()
+      }
+
+      selected_point(clicked[1, , drop = FALSE])
+
+      clicked_row <- clicked[1, , drop = FALSE]
+      src_domain <- clicked$SRC_DOMAIN[1]
+      src_seq <- clicked$SRC_SEQ[1]
+
+      if (is.na(src_domain) || src_domain == "IMPORT") {
+        reset_details()
+        selected_source(
+          data.frame(Note = "Source: imported data (no SDTM source record)")
+        )
+        selected_info(paste0(
+          "Subject ", clicked$USUBJID[1],
+          " | ", clicked$ANALYTE[1],
+          " | ", input$time_metric, " = ",
+          round(clicked[[input$time_metric]][1], 2),
+          " | DV = ", round(clicked$DV[1], 4),
+          " | Source: IMPORT"
+        ))
+        return()
+      }
+
+      if (is.na(src_seq)) {
+        reset_details()
+        selected_source(
+          data.frame(Note = "SRC_SEQ is NA; cannot look up source record.")
+        )
+        selected_info(paste0(
+          "Subject ", clicked$USUBJID[1],
+          " | ", clicked$ANALYTE[1],
+          " | Domain: ", src_domain
+        ))
+        return()
+      }
+
+      apply_source_lookup(clicked_row, src_domain, src_seq)
+      apply_ex_lookup(clicked_row)
+      apply_nif_highlight(clicked_row, src_domain, src_seq)
     })
 
     output$has_selection <- shiny::reactive({
