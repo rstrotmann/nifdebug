@@ -2,15 +2,23 @@
 #'
 #' Launches a Shiny app that renders an interactive version of [nif::plot.nif()].
 #' Data points are clickable; clicking a point displays the corresponding
-#' source SDTM record (identified via `SRC_DOMAIN` and `SRC_SEQ`) in a table
-#' below the plot.
+#' source SDTM record in a table below the plot.
 #'
-#' The NIF object must contain `SRC_DOMAIN` and `SRC_SEQ` columns. These are
-#' present when the NIF is built with `debug = TRUE` or when the global
-#' `nif::nif_option("debug")` is set.
+#' Source lookups are only available when:
+#' - `sdtm` is provided, and
+#' - the NIF includes `SRC_DOMAIN` and `SRC_SEQ`.
 #'
-#' @param nif A nif object containing `SRC_DOMAIN` and `SRC_SEQ` columns.
-#' @param sdtm A sdtm object used to look up source records.
+#' If SDTM lookup is not available, the upper SDTM/EX tables are not shown,
+#' but the NIF record table can still be displayed.
+#'
+#' `SRC_DOMAIN` and `SRC_SEQ` are typically present when the NIF is built with
+#' `debug = TRUE` or when the global `nif::nif_option("debug")` is set.
+#'
+#' @param nif A nif object. If it contains `SRC_DOMAIN` and `SRC_SEQ`, clicking
+#'   points enables SDTM source lookup and will display the SDTM tables.
+#' @param sdtm An optional `sdtm` object used to look up source records.
+#'   If `NULL` (or missing the required NIF source fields), the SDTM/EX tables
+#'   are hidden.
 #' @param analyte The analyte(s) to be plotted, as character.
 #' @param dose The dose(s) to be filtered for.
 #' @param time The time field for the x-axis. One of 'TIME', 'NTIME', 'TAFD'
@@ -35,7 +43,7 @@
 #' @seealso [nif::plot.nif()], [nif::nif_viewer()]
 nif_debug <- function(
     nif,
-    sdtm,
+    sdtm = NULL,
     analyte = NULL,
     dose = NULL,
     time = "TAFD",
@@ -64,16 +72,11 @@ nif_debug <- function(
   nif:::validate_argument(dose_norm, "logical")
   nif:::validate_argument(lines, "logical")
 
-  if (!inherits(sdtm, "sdtm")) {
-    stop("'sdtm' must be a sdtm object")
+  has_sdtm_source_fields <- all(c("SRC_DOMAIN", "SRC_SEQ") %in% names(nif))
+  if (!is.null(sdtm) && !inherits(sdtm, "sdtm")) {
+    stop("'sdtm' must be a sdtm object (or NULL if SDTM lookup is not desired).")
   }
-
-  if (!all(c("SRC_DOMAIN", "SRC_SEQ") %in% names(nif))) {
-    stop(
-      "NIF object must contain SRC_DOMAIN and SRC_SEQ columns. ",
-      "Rebuild with debug = TRUE."
-    )
-  }
+  can_lookup_sdtm <- !is.null(sdtm) && inherits(sdtm, "sdtm") && has_sdtm_source_fields
 
   plot_data_set <- nif::make_plot_data_set(
     nif, analyte, dose, time, color, min_time, max_time, cfb, dose_norm, facet
@@ -374,11 +377,16 @@ nif_debug <- function(
     }
 
     apply_source_lookup <- function(clicked_row, src_domain, src_seq) {
+      src_testcd <- if ("SRC_TESTCD" %in% names(clicked_row)) {
+        clicked_row$SRC_TESTCD[1]
+      } else {
+        NULL
+      }
       tryCatch({
         result <- lookup_domain_neighbors(
           sdtm, src_domain,
           clicked_row$USUBJID[1], src_seq,
-          clicked_row$SRC_TESTCD[1]
+          src_testcd
         )
 
         if (is.null(result$data)) {
@@ -432,33 +440,64 @@ nif_debug <- function(
       })
     }
 
-    apply_nif_highlight <- function(clicked_row, src_domain, src_seq) {
+    apply_nif_highlight <- function(clicked_row) {
       tryCatch({
         subj_nif <- nif[nif$USUBJID == clicked_row$USUBJID[1], , drop = FALSE]
         subj_nif <- subj_nif[order(subj_nif$TIME), , drop = FALSE]
 
-        match_idx <- which(
-          subj_nif$EVID == 0 &
-            !is.na(subj_nif$SRC_DOMAIN) & subj_nif$SRC_DOMAIN == src_domain &
-            !is.na(subj_nif$SRC_SEQ) & subj_nif$SRC_SEQ == src_seq &
-            subj_nif$ANALYTE == clicked_row$ANALYTE[1]
-        )
+        src_domain <- if ("SRC_DOMAIN" %in% names(clicked_row)) clicked_row$SRC_DOMAIN[1] else NA_character_
+        src_seq <- if ("SRC_SEQ" %in% names(clicked_row)) clicked_row$SRC_SEQ[1] else NA
 
-        if (length(match_idx) > 0) {
-          idx <- match_idx[1]
-          obs_time <- subj_nif$TIME[idx]
-          admin_idx <- which(subj_nif$EVID == 1 & subj_nif$TIME <= obs_time)
-          start_idx <- if (length(admin_idx) > 0) max(admin_idx) else 1L
-          neighbor_idx <- seq(start_idx, idx)
-          nif_subset <- subj_nif[neighbor_idx, , drop = FALSE]
-          hl <- rep(FALSE, length(neighbor_idx))
-          hl[length(neighbor_idx)] <- TRUE
-          selected_nif_rows(nif_subset)
-          selected_nif_highlight(hl)
-        } else {
-          selected_nif_rows(NULL)
-          selected_nif_highlight(NULL)
+        idx <- NULL
+        if (!is.na(src_domain) &&
+            !is.na(src_seq) &&
+            "SRC_DOMAIN" %in% names(subj_nif) &&
+            "SRC_SEQ" %in% names(subj_nif)) {
+          match_idx <- which(
+            subj_nif$EVID == 0 &
+              !is.na(subj_nif$SRC_DOMAIN) & subj_nif$SRC_DOMAIN == src_domain &
+              !is.na(subj_nif$SRC_SEQ) & subj_nif$SRC_SEQ == src_seq &
+              subj_nif$ANALYTE == clicked_row$ANALYTE[1]
+          )
+          if (length(match_idx) > 0) idx <- match_idx[1]
         }
+
+        if (is.null(idx)) {
+          obs_candidates <- which(
+            subj_nif$EVID == 0 &
+              subj_nif$ANALYTE == clicked_row$ANALYTE[1] &
+              !is.na(subj_nif$TIME)
+          )
+
+          if (length(obs_candidates) == 0) {
+            selected_nif_rows(NULL)
+            selected_nif_highlight(NULL)
+            return()
+          }
+
+          target_time <- if ("TIME" %in% names(clicked_row)) {
+            clicked_row$TIME[1]
+          } else if (input$time_metric %in% names(clicked_row)) {
+            clicked_row[[input$time_metric]][1]
+          } else {
+            NA
+          }
+          if (is.na(target_time)) {
+            idx <- obs_candidates[1]
+          } else {
+            idx <- obs_candidates[which.min(abs(subj_nif$TIME[obs_candidates] - target_time))]
+          }
+        }
+
+        obs_time <- subj_nif$TIME[idx]
+        admin_idx <- which(subj_nif$EVID == 1 & subj_nif$TIME <= obs_time)
+        start_idx <- if (length(admin_idx) > 0) max(admin_idx) else 1L
+        neighbor_idx <- seq(start_idx, idx)
+        nif_subset <- subj_nif[neighbor_idx, , drop = FALSE]
+        hl <- rep(FALSE, length(neighbor_idx))
+        hl[length(neighbor_idx)] <- TRUE
+        selected_nif_rows(nif_subset)
+        selected_nif_highlight(hl)
       }, error = function(e) {
         selected_nif_rows(NULL)
         selected_nif_highlight(NULL)
@@ -480,45 +519,59 @@ nif_debug <- function(
       selected_point(clicked[1, , drop = FALSE])
 
       clicked_row <- clicked[1, , drop = FALSE]
-      src_domain <- clicked$SRC_DOMAIN[1]
-      src_seq <- clicked$SRC_SEQ[1]
 
-      if (is.na(src_domain) || src_domain == "IMPORT") {
+      src_domain <- if ("SRC_DOMAIN" %in% names(clicked_row)) clicked_row$SRC_DOMAIN[1] else NA_character_
+      src_seq <- if ("SRC_SEQ" %in% names(clicked_row)) clicked_row$SRC_SEQ[1] else NA
+
+      if (isTRUE(can_lookup_sdtm)) {
+        if (is.na(src_domain) || src_domain == "IMPORT") {
+          reset_details()
+          selected_source(
+            data.frame(Note = "Source: imported data (no SDTM source record)")
+          )
+          selected_info(paste0(
+            "Subject ", clicked_row$USUBJID[1],
+            " | ", clicked_row$ANALYTE[1],
+            " | ", input$time_metric, " = ",
+            round(clicked_row[[input$time_metric]][1], 2),
+            " | DV = ", round(clicked_row$DV[1], 4),
+            " | Source: IMPORT"
+          ))
+          return()
+        }
+
+        if (is.na(src_seq)) {
+          reset_details()
+          selected_source(
+            data.frame(Note = "SRC_SEQ is NA; cannot look up source record.")
+          )
+          selected_info(paste0(
+            "Subject ", clicked_row$USUBJID[1],
+            " | ", clicked_row$ANALYTE[1],
+            " | Domain: ", src_domain
+          ))
+          return()
+        }
+
+        apply_source_lookup(clicked_row, src_domain, src_seq)
+        apply_ex_lookup(clicked_row)
+        apply_nif_highlight(clicked_row)
+      } else {
         reset_details()
-        selected_source(
-          data.frame(Note = "Source: imported data (no SDTM source record)")
-        )
         selected_info(paste0(
-          "Subject ", clicked$USUBJID[1],
-          " | ", clicked$ANALYTE[1],
+          "Subject ", clicked_row$USUBJID[1],
+          " | ", clicked_row$ANALYTE[1],
           " | ", input$time_metric, " = ",
-          round(clicked[[input$time_metric]][1], 2),
-          " | DV = ", round(clicked$DV[1], 4),
-          " | Source: IMPORT"
+          round(clicked_row[[input$time_metric]][1], 2),
+          " | DV = ", round(clicked_row$DV[1], 4),
+          " | Source: unavailable (no SDTM lookup / missing SRC fields)"
         ))
-        return()
+        apply_nif_highlight(clicked_row)
       }
-
-      if (is.na(src_seq)) {
-        reset_details()
-        selected_source(
-          data.frame(Note = "SRC_SEQ is NA; cannot look up source record.")
-        )
-        selected_info(paste0(
-          "Subject ", clicked$USUBJID[1],
-          " | ", clicked$ANALYTE[1],
-          " | Domain: ", src_domain
-        ))
-        return()
-      }
-
-      apply_source_lookup(clicked_row, src_domain, src_seq)
-      apply_ex_lookup(clicked_row)
-      apply_nif_highlight(clicked_row, src_domain, src_seq)
     })
 
     output$has_selection <- shiny::reactive({
-      !is.null(selected_source())
+      !is.null(selected_source()) || !is.null(selected_nif_rows())
     })
     shiny::outputOptions(output, "has_selection", suspendWhenHidden = FALSE)
 
@@ -530,7 +583,8 @@ nif_debug <- function(
       shiny::req(selected_source())
       df <- selected_source()
       sel_seq <- selected_seq()
-      src_dom <- selected_point()$SRC_DOMAIN[1]
+      sp <- selected_point()
+      src_dom <- if (!is.null(sp) && "SRC_DOMAIN" %in% names(sp)) sp$SRC_DOMAIN[1] else NA_character_
       seq_col <- if (!is.na(src_dom)) paste0(toupper(src_dom), "SEQ") else NULL
 
       render_sdtm_table(df, seq_col, sel_seq)
