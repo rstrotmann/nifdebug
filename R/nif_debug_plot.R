@@ -1,6 +1,8 @@
 #' Interactive debug plot for NIF objects
 #'
 #' Launches a Shiny app that renders an interactive version of [nif::plot.nif()].
+#' The app includes a subject (`USUBJID`) filter above the plot; the default is
+#' all subjects.
 #' Data points are clickable; clicking a point displays the corresponding
 #' source SDTM record in a table below the plot.
 #'
@@ -115,6 +117,14 @@ nif_debug <- function(
     plot_title <- paste0(plot_title, " by ", plot_data_set$facet)
   }
 
+  has_usubjid <- "USUBJID" %in% names(obs_data)
+  usubjid_choices <- if (has_usubjid) {
+    u <- sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
+    c(All = "all", stats::setNames(u, u))
+  } else {
+    character(0)
+  }
+
   render_highlight_table <- function(df, highlight_rows = NULL, admin_rows = NULL) {
     header <- paste0(
       "<tr>",
@@ -222,6 +232,18 @@ nif_debug <- function(
       shiny::column(3, shiny::checkboxInput("log_y", "Logarithmic y axis", value = log)),
       shiny::column(3, shiny::checkboxInput("show_lines", "Show lines", value = lines))
     ),
+    if (has_usubjid && length(usubjid_choices) > 0) {
+      shiny::fluidRow(
+        shiny::column(
+          12,
+          shiny::selectInput(
+            "usubjid", "Subject",
+            choices = usubjid_choices,
+            selected = "all"
+          )
+        )
+      )
+    },
     shiny::plotOutput("main_plot", click = "plot_click", height = "500px"),
     shiny::hr(),
     shiny::h4("Selected observation"),
@@ -276,8 +298,17 @@ nif_debug <- function(
       selected_nif_highlight(NULL)
     }
 
+    if (has_usubjid) {
+      shiny::observeEvent(input$usubjid, { reset_all() }, ignoreInit = TRUE)
+    }
+
     obs_data_r <- shiny::reactive({
       d <- dplyr::filter(obs_data, .data$ANALYTE %in% input$analytes)
+      if (has_usubjid &&
+          !is.null(input$usubjid) &&
+          isTRUE(input$usubjid != "all")) {
+        d <- dplyr::filter(d, .data$USUBJID == input$usubjid)
+      }
       if (isTRUE(input$log_y)) {
         d <- dplyr::mutate(
           d, DV = dplyr::case_when(.data$DV == 0 ~ NA, .default = .data$DV)

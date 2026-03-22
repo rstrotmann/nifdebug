@@ -6,7 +6,7 @@
 \usage{
 nif_debug(
   nif,
-  sdtm,
+  sdtm = NULL,
   analyte = NULL,
   dose = NULL,
   time = "TAFD",
@@ -25,9 +25,12 @@ nif_debug(
 )
 }
 \arguments{
-\item{nif}{A nif object containing `SRC_DOMAIN` and `SRC_SEQ` columns.}
+\item{nif}{A nif object. If it contains `SRC_DOMAIN` and `SRC_SEQ`, clicking
+points enables SDTM source lookup and will display the SDTM tables.}
 
-\item{sdtm}{A sdtm object used to look up source records.}
+\item{sdtm}{An optional `sdtm` object used to look up source records.
+If `NULL` (or missing the required NIF source fields), the SDTM/EX tables
+are hidden.}
 
 \item{analyte}{The analyte(s) to be plotted, as character.}
 
@@ -65,14 +68,21 @@ A Shiny app object.
 }
 \description{
 Launches a Shiny app that renders an interactive version of [nif::plot.nif()].
+The app includes a subject (`USUBJID`) filter above the plot; the default is
+all subjects.
 Data points are clickable; clicking a point displays the corresponding
-source SDTM record (identified via `SRC_DOMAIN` and `SRC_SEQ`) in a table
-below the plot.
+source SDTM record in a table below the plot.
 }
 \details{
-The NIF object must contain `SRC_DOMAIN` and `SRC_SEQ` columns. These are
-present when the NIF is built with `debug = TRUE` or when the global
-`nif::nif_option("debug")` is set.
+Source lookups are only available when:
+- `sdtm` is provided, and
+- the NIF includes `SRC_DOMAIN` and `SRC_SEQ`.
+
+If SDTM lookup is not available, the upper SDTM/EX tables are not shown,
+but the NIF record table can still be displayed.
+
+`SRC_DOMAIN` and `SRC_SEQ` are typically present when the NIF is built with
+`debug = TRUE` or when the global `nif::nif_option("debug")` is set.
 }
 \seealso{
 [nif::plot.nif()], [nif::nif_viewer()]
