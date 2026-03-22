@@ -16,7 +16,7 @@ nif_debug(
   max_time = NULL,
   cfb = FALSE,
   dose_norm = FALSE,
-  log = FALSE,
+  log = TRUE,
   lines = TRUE,
   size = 2,
   alpha = 1,
@@ -51,7 +51,7 @@ or 'TAD'.}
 
 \item{dose_norm}{Dose-normalized values, as logical.}
 
-\item{log}{Logarithmic y axis, as logical.}
+\item{log}{Logarithmic y axis, as logical. Defaults to `TRUE` (Log checked in the app).}
 
 \item{lines}{Plot lines, as logical.}
 
@@ -69,7 +69,8 @@ A Shiny app object.
 \description{
 Launches a Shiny app that renders an interactive version of [nif::plot.nif()].
 The app includes a subject (`USUBJID`) filter above the plot; the default is
-all subjects.
+all subjects. Next to the selector, available subject fields from the NIF
+(`ID`, `SEX`, `AGE`, `WEIGHT`, `DL`) are shown when a single subject is chosen.
 Data points are clickable; clicking a point displays the corresponding
 source SDTM record in a table below the plot.
 }

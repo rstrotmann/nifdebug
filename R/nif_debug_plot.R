@@ -2,7 +2,8 @@
 #'
 #' Launches a Shiny app that renders an interactive version of [nif::plot.nif()].
 #' The app includes a subject (`USUBJID`) filter above the plot; the default is
-#' all subjects.
+#' all subjects. Next to the selector, available subject fields from the NIF
+#' (`ID`, `SEX`, `AGE`, `WEIGHT`, `DL`) are shown when a single subject is chosen.
 #' Data points are clickable; clicking a point displays the corresponding
 #' source SDTM record in a table below the plot.
 #'
@@ -31,7 +32,7 @@
 #' @param max_time The maximal time, as numeric.
 #' @param cfb Plot change from baseline, as logical.
 #' @param dose_norm Dose-normalized values, as logical.
-#' @param log Logarithmic y axis, as logical.
+#' @param log Logarithmic y axis, as logical. Defaults to `TRUE` (Log checked in the app).
 #' @param lines Plot lines, as logical.
 #' @param size The `size` parameter to [ggplot2::geom_point()], as numeric.
 #' @param alpha The `alpha` parameter to [ggplot2::geom_point()], as numeric.
@@ -55,7 +56,7 @@ nif_debug <- function(
     max_time = NULL,
     cfb = FALSE,
     dose_norm = FALSE,
-    log = FALSE,
+    log = TRUE,
     lines = TRUE,
     size = 2,
     alpha = 1,
@@ -118,11 +119,43 @@ nif_debug <- function(
   }
 
   has_usubjid <- "USUBJID" %in% names(obs_data)
+  plot_options_selected <- c(
+    if (isTRUE(log)) "log_y",
+    if (isTRUE(lines)) "show_lines"
+  )
+
   usubjid_choices <- if (has_usubjid) {
     u <- sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
     c(All = "all", stats::setNames(u, u))
   } else {
     character(0)
+  }
+
+  subject_attr_lookup <- if (has_usubjid) {
+    uids <- sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
+    extra_cols <- c("SEX", "AGE", "WEIGHT", "DL")
+    lookup <- vector("list", length(uids))
+    names(lookup) <- uids
+    for (id in uids) {
+      sub <- nif[
+        !is.na(nif$USUBJID) & as.character(nif$USUBJID) == as.character(id),
+        ,
+        drop = FALSE
+      ]
+      if (nrow(sub) == 0) next
+      r <- sub[1, , drop = FALSE]
+      entry <- list(ID = as.character(r$USUBJID[1]))
+      for (cn in extra_cols) {
+        if (cn %in% names(r)) {
+          v <- r[[cn]][1]
+          if (!is.na(v)) entry[[cn]] <- v
+        }
+      }
+      lookup[[id]] <- entry
+    }
+    lookup
+  } else {
+    NULL
   }
 
   render_highlight_table <- function(df, highlight_rows = NULL, admin_rows = NULL) {
@@ -210,7 +243,18 @@ nif_debug <- function(
          font-weight: bold; }
        .admin-row { font-weight: bold; color: #0066cc !important; }
        .sdtm-table table { font-size: 12px; }
-       .sdtm-table td, .sdtm-table th { padding: 4px 8px; }"
+       .sdtm-table td, .sdtm-table th { padding: 4px 8px; }
+       .subject-select-row {
+         display: flex;
+         flex-wrap: wrap;
+         align-items: flex-start;
+       }
+       .subject-summary-col {
+         padding-top: 26px;
+       }
+       .subject-summary { font-size: 13px; line-height: 1.35; color: #333;
+         margin: 0; }
+       .subject-summary p { margin: 0; }"
     )),
     shiny::h3("NIF debug plot"),
     shiny::fluidRow(
@@ -229,17 +273,34 @@ nif_debug <- function(
           selected = default_time
         )
       ),
-      shiny::column(3, shiny::checkboxInput("log_y", "Logarithmic y axis", value = log)),
-      shiny::column(3, shiny::checkboxInput("show_lines", "Show lines", value = lines))
+      shiny::column(
+        3,
+        shiny::checkboxGroupInput(
+          "plot_options",
+          "Plot",
+          choices = c("Log" = "log_y", "Lines" = "show_lines"),
+          selected = plot_options_selected,
+          inline = TRUE
+        )
+      )
     ),
     if (has_usubjid && length(usubjid_choices) > 0) {
-      shiny::fluidRow(
+      shiny::tags$div(
+        class = "row subject-select-row",
         shiny::column(
-          12,
+          4,
           shiny::selectInput(
-            "usubjid", "Subject",
+            "usubjid",
+            "USUBJID",
             choices = usubjid_choices,
             selected = "all"
+          )
+        ),
+        shiny::column(
+          8,
+          shiny::div(
+            class = "subject-summary-col",
+            shiny::uiOutput("subject_summary")
           )
         )
       )
@@ -300,16 +361,45 @@ nif_debug <- function(
 
     if (has_usubjid) {
       shiny::observeEvent(input$usubjid, { reset_all() }, ignoreInit = TRUE)
+
+      output$subject_summary <- shiny::renderUI({
+        u <- input$usubjid
+        if (is.null(u) || u == "all") {
+          return(shiny::tags$p(
+            shiny::tags$em(
+              paste(
+                "Select a subject"
+              )
+            ),
+            class = "subject-summary text-muted"
+          ))
+        }
+        parts <- subject_attr_lookup[[u]]
+        if (is.null(parts) || length(parts) == 0) {
+          line <- paste0("ID: ", htmltools::htmlEscape(as.character(u)))
+          return(shiny::tags$p(class = "subject-summary", shiny::HTML(line)))
+        }
+        labels <- c(
+          ID = "ID", SEX = "SEX", AGE = "AGE", WEIGHT = "WEIGHT", DL = "DL"
+        )
+        ord <- intersect(c("ID", "SEX", "AGE", "WEIGHT", "DL"), names(parts))
+        pieces <- vapply(ord, function(nm) {
+          paste0(labels[nm], ": ", htmltools::htmlEscape(as.character(parts[[nm]])))
+        }, character(1))
+        line <- paste(pieces, collapse = " \u00b7 ")
+        shiny::tags$p(class = "subject-summary", shiny::HTML(line))
+      })
     }
 
     obs_data_r <- shiny::reactive({
+      shiny::req(input$plot_options)
       d <- dplyr::filter(obs_data, .data$ANALYTE %in% input$analytes)
       if (has_usubjid &&
           !is.null(input$usubjid) &&
           isTRUE(input$usubjid != "all")) {
         d <- dplyr::filter(d, .data$USUBJID == input$usubjid)
       }
-      if (isTRUE(input$log_y)) {
+      if ("log_y" %in% input$plot_options) {
         d <- dplyr::mutate(
           d, DV = dplyr::case_when(.data$DV == 0 ~ NA, .default = .data$DV)
         )
@@ -374,10 +464,11 @@ nif_debug <- function(
 
     output$main_plot <- shiny::renderPlot({
       shiny::req(input$time_metric)
+      shiny::req(input$plot_options)
       build_main_plot(
         time_metric = input$time_metric,
-        show_lines = input$show_lines,
-        log_y = input$log_y
+        show_lines = "show_lines" %in% input$plot_options,
+        log_y = "log_y" %in% input$plot_options
       )
     })
 
