@@ -124,15 +124,23 @@ nif_debug <- function(
     if (isTRUE(lines)) "show_lines"
   )
 
+  usubjid_subject_ids <- if (has_usubjid) {
+    sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
+  } else {
+    character(0)
+  }
+
   usubjid_choices <- if (has_usubjid) {
-    u <- sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
-    c(All = "all", stats::setNames(u, u))
+    c(
+      All = "all",
+      stats::setNames(usubjid_subject_ids, usubjid_subject_ids)
+    )
   } else {
     character(0)
   }
 
   subject_attr_lookup <- if (has_usubjid) {
-    uids <- sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
+    uids <- usubjid_subject_ids
     extra_cols <- c("SEX", "AGE", "WEIGHT", "DL")
     lookup <- vector("list", length(uids))
     names(lookup) <- uids
@@ -254,7 +262,21 @@ nif_debug <- function(
        }
        .subject-summary { font-size: 13px; line-height: 1.35; color: #333;
          margin: 0; }
-       .subject-summary p { margin: 0; }"
+       .subject-summary p { margin: 0; }
+       .subject-select-group .control-label { display: block; }
+       .subject-nav-row {
+         display: flex;
+         flex-direction: row;
+         align-items: flex-end;
+         gap: 8px;
+         width: 100%;
+       }
+       .subject-nav-row .btn { flex: 0 0 auto; }
+       .subject-select-input {
+         flex: 1 1 auto;
+         min-width: 0;
+       }
+       .subject-select-input .shiny-input-container { margin-bottom: 0; }"
     )),
     shiny::h3("NIF debug plot"),
     shiny::fluidRow(
@@ -289,11 +311,33 @@ nif_debug <- function(
         class = "row subject-select-row",
         shiny::column(
           4,
-          shiny::selectInput(
-            "usubjid",
-            "USUBJID",
-            choices = usubjid_choices,
-            selected = "all"
+          shiny::tags$div(
+            class = "subject-select-group",
+            shiny::tags$label(`for` = "usubjid", class = "control-label", "USUBJID"),
+            shiny::tags$div(
+              class = "subject-nav-row",
+              shiny::actionButton(
+                "usubjid_prev",
+                label = "",
+                icon = shiny::icon("arrow-left"),
+                title = "Previous subject"
+              ),
+              shiny::tags$div(
+                class = "subject-select-input",
+                shiny::selectInput(
+                  "usubjid",
+                  label = NULL,
+                  choices = usubjid_choices,
+                  selected = "all"
+                )
+              ),
+              shiny::actionButton(
+                "usubjid_next",
+                label = "",
+                icon = shiny::icon("arrow-right"),
+                title = "Next subject"
+              )
+            )
           )
         ),
         shiny::column(
@@ -361,6 +405,46 @@ nif_debug <- function(
 
     if (has_usubjid) {
       shiny::observeEvent(input$usubjid, { reset_all() }, ignoreInit = TRUE)
+
+      shiny::observeEvent(input$usubjid_prev, {
+        ids <- usubjid_subject_ids
+        if (length(ids) == 0) return()
+        cur <- input$usubjid
+        if (is.null(cur)) return()
+        cur <- as.character(cur)
+        if (cur == "all") {
+          new_val <- as.character(ids[length(ids)])
+        } else {
+          i <- match(cur, as.character(ids))
+          if (is.na(i)) return()
+          new_val <- if (i <= 1L) {
+            as.character(ids[length(ids)])
+          } else {
+            as.character(ids[i - 1L])
+          }
+        }
+        shiny::updateSelectInput(session, "usubjid", selected = new_val)
+      }, ignoreInit = TRUE)
+
+      shiny::observeEvent(input$usubjid_next, {
+        ids <- usubjid_subject_ids
+        if (length(ids) == 0) return()
+        cur <- input$usubjid
+        if (is.null(cur)) return()
+        cur <- as.character(cur)
+        if (cur == "all") {
+          new_val <- as.character(ids[1L])
+        } else {
+          i <- match(cur, as.character(ids))
+          if (is.na(i)) return()
+          new_val <- if (i >= length(ids)) {
+            as.character(ids[1L])
+          } else {
+            as.character(ids[i + 1L])
+          }
+        }
+        shiny::updateSelectInput(session, "usubjid", selected = new_val)
+      }, ignoreInit = TRUE)
 
       output$subject_summary <- shiny::renderUI({
         u <- input$usubjid
