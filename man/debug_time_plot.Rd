@@ -30,12 +30,13 @@ debug_time_plot(
 
 \item{color}{The column(s) to be used for coloring.}
 
-\item{facet}{The column(s) to be used for faceting.}
+\item{facet}{The column to be used for faceting. Only single values are
+allowed.}
 
 \item{min_time}{The minimal time in units of the selected time field, as
 numeric.}
 
-\item{max_time}{The minimal time in units of the selected time field, as
+\item{max_time}{The maximal time in units of the selected time field, as
 numeric.}
 
 \item{size}{The \code{size} parameter to \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}} as numeric.}

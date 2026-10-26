@@ -1,0 +1,831 @@
+#' Interactive debug plot for NIF objects
+#'
+#' Launches a Shiny app that renders an interactive version of [nif::plot.nif()].
+#' The app includes a subject (`USUBJID`) filter above the plot; the default is
+#' all subjects. Next to the selector, available subject fields from the NIF
+#' (`ID`, `SEX`, `AGE`, `WEIGHT`, `DL`) are shown when a single subject is chosen.
+#' Data points are clickable; clicking a point displays the corresponding
+#' source SDTM record in a table below the plot.
+#'
+#' Source lookups are only available when:
+#' - `sdtm` is provided, and
+#' - the NIF includes `SRC_DOMAIN` and `SRC_SEQ`.
+#'
+#' If SDTM lookup is not available, the upper SDTM/EX tables are not shown,
+#' but the NIF record table can still be displayed.
+#'
+#' `SRC_DOMAIN` and `SRC_SEQ` are typically present when the NIF is built with
+#' `debug = TRUE` or when the global `nif::nif_option("debug")` is set.
+#'
+#' @param nif A nif object. If it contains `SRC_DOMAIN` and `SRC_SEQ`, clicking
+#'   points enables SDTM source lookup and will display the SDTM tables.
+#' @param sdtm An optional `sdtm` object used to look up source records.
+#'   If `NULL` (or missing the required NIF source fields), the SDTM/EX tables
+#'   are hidden.
+#' @param analyte The analyte(s) to be plotted, as character.
+#' @param dose The dose(s) to be filtered for.
+#' @param time The time field for the x-axis. One of 'TIME', 'NTIME', 'TAFD'
+#'   or 'TAD'.
+#' @param color The column(s) to be used for coloring.
+#' @param facet The column(s) to be used for faceting.
+#' @param min_time The minimal time, as numeric.
+#' @param max_time The maximal time, as numeric.
+#' @param cfb Plot change from baseline, as logical.
+#' @param dose_norm Dose-normalized values, as logical.
+#' @param log Logarithmic y axis, as logical. Defaults to `TRUE` (Log checked in the app).
+#' @param lines Plot lines, as logical.
+#' @param size The `size` parameter to [ggplot2::geom_point()], as numeric.
+#' @param alpha The `alpha` parameter to [ggplot2::geom_point()], as numeric.
+#' @param scales The `scales` parameter to [ggplot2::facet_wrap()].
+#' @param base_size Base font size as numeric.
+#'
+#' @return A Shiny app object.
+#' @import nif
+#' @import shiny
+#' @export
+#' @seealso [nif::plot.nif()], [nif::nif_viewer()]
+nif_debug <- function(
+    nif,
+    sdtm = NULL,
+    analyte = NULL,
+    dose = NULL,
+    time = "TAFD",
+    color = NULL,
+    facet = "DOSE",
+    min_time = NULL,
+    max_time = NULL,
+    cfb = FALSE,
+    dose_norm = FALSE,
+    log = TRUE,
+    lines = TRUE,
+    size = 2,
+    alpha = 1,
+    scales = "fixed",
+    base_size = 16
+) {
+  # input validation
+  nif:::validate_nif(nif)
+  nif:::validate_argument(analyte, "character", allow_null = TRUE)
+  nif:::validate_argument(time, "character")
+  nif:::validate_argument(color, "character", allow_null = TRUE)
+  nif:::validate_argument(facet, "character", allow_null = TRUE)
+  nif:::validate_argument(min_time, "numeric", allow_null = TRUE)
+  nif:::validate_argument(max_time, "numeric", allow_null = TRUE)
+  nif:::validate_argument(cfb, "logical")
+  nif:::validate_argument(dose_norm, "logical")
+  nif:::validate_argument(lines, "logical")
+
+  has_sdtm_source_fields <- all(c("SRC_DOMAIN", "SRC_SEQ") %in% names(nif))
+  if (!is.null(sdtm) && !inherits(sdtm, "sdtm")) {
+    stop("'sdtm' must be a sdtm object (or NULL if SDTM lookup is not desired).")
+  }
+  can_lookup_sdtm <- !is.null(sdtm) && inherits(sdtm, "sdtm") && has_sdtm_source_fields
+
+  plot_data_set <- nif:::make_plot_data_set(
+    nif, analyte, dose, time, color, min_time, max_time, cfb, dose_norm, facet
+  )
+
+  plot_data <- plot_data_set$data
+
+  plot_data <- plot_data |>
+    tidyr::unite("GROUP", dplyr::any_of(
+      c(plot_data_set$group, plot_data_set$color, plot_data_set$facet)),
+      sep = "-", remove = FALSE
+    )
+
+  obs_data <- plot_data |>
+    dplyr::filter(.data$EVID == 0) |>
+    dplyr::filter(!is.na(.data$DV))
+
+  time_choices <- intersect(
+    c("TIME", "TAFD", "TAD", "NTIME"), names(obs_data)
+  )
+  default_time <- if (time %in% time_choices && length(time_choices) > 0) {
+    time
+  } else if (length(time_choices) > 0) {
+    time_choices[1]
+  } else {
+    time
+  }
+
+  analyte_values <- unique(obs_data$ANALYTE)
+  y_label <- ifelse(length(analyte_values) == 1, analyte_values, "DV")
+  if (isTRUE(dose_norm)) y_label <- paste0(y_label, " / DOSE")
+
+  plot_title <- nif::nice_enumeration(analyte_values)
+  if (isTRUE(cfb)) plot_title <- paste0(plot_title, " change from baseline")
+  if ("FACET" %in% names(obs_data) && length(unique(obs_data$FACET)) > 1) {
+    plot_title <- paste0(plot_title, " by ", plot_data_set$facet)
+  }
+
+  has_usubjid <- "USUBJID" %in% names(obs_data)
+  plot_options_selected <- c(
+    if (isTRUE(log)) "log_y",
+    if (isTRUE(lines)) "show_lines"
+  )
+
+  usubjid_subject_ids <- if (has_usubjid) {
+    sort(unique(obs_data$USUBJID[!is.na(obs_data$USUBJID)]))
+  } else {
+    character(0)
+  }
+
+  usubjid_choices <- if (has_usubjid) {
+    c(
+      All = "all",
+      stats::setNames(usubjid_subject_ids, usubjid_subject_ids)
+    )
+  } else {
+    character(0)
+  }
+
+  subject_attr_lookup <- if (has_usubjid) {
+    uids <- usubjid_subject_ids
+    extra_cols <- c("SEX", "AGE", "WEIGHT", "DL")
+    lookup <- vector("list", length(uids))
+    names(lookup) <- uids
+    for (id in uids) {
+      sub <- nif[
+        !is.na(nif$USUBJID) & as.character(nif$USUBJID) == as.character(id),
+        ,
+        drop = FALSE
+      ]
+      if (nrow(sub) == 0) next
+      r <- sub[1, , drop = FALSE]
+      entry <- list(ID = as.character(r$USUBJID[1]))
+      for (cn in extra_cols) {
+        if (cn %in% names(r)) {
+          v <- r[[cn]][1]
+          if (!is.na(v)) entry[[cn]] <- v
+        }
+      }
+      lookup[[id]] <- entry
+    }
+    lookup
+  } else {
+    NULL
+  }
+
+  render_highlight_table <- function(df, highlight_rows = NULL, admin_rows = NULL) {
+    header <- paste0(
+      "<tr>",
+      paste0("<th>", htmltools::htmlEscape(names(df)), "</th>", collapse = ""),
+      "</tr>"
+    )
+
+    if (is.null(highlight_rows)) highlight_rows <- rep(FALSE, nrow(df))
+    if (is.null(admin_rows)) admin_rows <- rep(FALSE, nrow(df))
+
+    rows <- vapply(seq_len(nrow(df)), function(i) {
+      classes <- c(if (highlight_rows[i]) "highlight-row", if (admin_rows[i]) "admin-row")
+      cls <- if (length(classes)) paste0(' class="', paste(classes, collapse = " "), '"') else ""
+      cells <- paste0(
+        "<td>",
+        vapply(df[i, ], function(v) {
+          htmltools::htmlEscape(as.character(v))
+        }, character(1)),
+        "</td>",
+        collapse = ""
+      )
+      paste0("<tr", cls, ">", cells, "</tr>")
+    }, character(1))
+
+    shiny::HTML(paste0(
+      '<div style="overflow-x: auto;">',
+      '<table class="table table-bordered table-striped table-hover"',
+      ' style="width: 100%;">',
+      "<thead>", header, "</thead>",
+      "<tbody>", paste(rows, collapse = ""), "</tbody>",
+      "</table></div>"
+    ))
+  }
+
+  render_sdtm_table <- function(df, seq_col, highlight_seq) {
+    hl <- rep(FALSE, nrow(df))
+    if (!is.null(highlight_seq) && !is.null(seq_col) &&
+        seq_col %in% names(df)) {
+      hl <- !is.na(df[[seq_col]]) & df[[seq_col]] == highlight_seq
+    }
+    render_highlight_table(df, hl)
+  }
+
+
+  lookup_domain_neighbors <- function(
+      sdtm_obj, domain_name, usubjid, target_seq, src_testcd = NULL
+  ) {
+    src_data <- domain(sdtm_obj, tolower(domain_name))
+    seq_col <- paste0(toupper(domain_name), "SEQ")
+    testcd_col <- paste0(toupper(domain_name), "TESTCD")
+
+    if (!seq_col %in% names(src_data)) {
+      return(list(data = NULL, seq_col = seq_col, seq_val = target_seq))
+    }
+
+    subj_data <- src_data
+    if ("USUBJID" %in% names(src_data)) {
+      subj_data <- subj_data[subj_data$USUBJID == usubjid, , drop = FALSE]
+    }
+    if (!is.null(src_testcd) && testcd_col %in% names(subj_data)) {
+      subj_data <- subj_data[subj_data[[testcd_col]] == src_testcd, , drop = FALSE]
+    }
+    subj_data <- subj_data[order(subj_data[[seq_col]]), , drop = FALSE]
+
+    match_idx <- which(subj_data[[seq_col]] == target_seq)
+    if (length(match_idx) == 0) {
+      return(list(data = NULL, seq_col = seq_col, seq_val = target_seq))
+    }
+
+    idx <- match_idx[1]
+    neighbor_idx <- seq(max(1, idx - 1), min(nrow(subj_data), idx + 1))
+    list(
+      data = subj_data[neighbor_idx, , drop = FALSE],
+      seq_col = seq_col,
+      seq_val = target_seq
+    )
+  }
+
+  ui <- shiny::fluidPage(
+    title = "NIF debug plot",
+    shiny::tags$style(shiny::HTML(
+      ".highlight-row { background-color: #fff3cd !important;
+         font-weight: bold; }
+       .admin-row { font-weight: bold; color: #0066cc !important; }
+       .sdtm-table table { font-size: 12px; }
+       .sdtm-table td, .sdtm-table th { padding: 4px 8px; }
+       .subject-select-row {
+         display: flex;
+         flex-wrap: wrap;
+         align-items: flex-start;
+       }
+       .subject-summary-col {
+         padding-top: 26px;
+       }
+       .subject-summary { font-size: 13px; line-height: 1.35; color: #333;
+         margin: 0; }
+       .subject-summary p { margin: 0; }
+       .subject-select-group .control-label { display: block; }
+       .subject-nav-row {
+         display: flex;
+         flex-direction: row;
+         align-items: flex-end;
+         gap: 8px;
+         width: 100%;
+       }
+       .subject-nav-row .btn { flex: 0 0 auto; }
+       .subject-select-input {
+         flex: 1 1 auto;
+         min-width: 0;
+       }
+       .subject-select-input .shiny-input-container { margin-bottom: 0; }"
+    )),
+    shiny::h3("NIF debug plot"),
+    shiny::fluidRow(
+      shiny::column(
+        6,
+        shiny::checkboxGroupInput(
+          "analytes", "Analytes", choices = analyte_values,
+          selected = analyte_values, inline = TRUE
+        )
+      ),
+      shiny::column(
+        3,
+        shiny::selectInput(
+          "time_metric", "Time metric",
+          choices = time_choices,
+          selected = default_time
+        )
+      ),
+      shiny::column(
+        3,
+        shiny::checkboxGroupInput(
+          "plot_options",
+          "Plot",
+          choices = c("Log" = "log_y", "Lines" = "show_lines"),
+          selected = plot_options_selected,
+          inline = TRUE
+        )
+      )
+    ),
+    if (has_usubjid && length(usubjid_choices) > 0) {
+      shiny::tags$div(
+        class = "row subject-select-row",
+        shiny::column(
+          4,
+          shiny::tags$div(
+            class = "subject-select-group",
+            shiny::tags$label(`for` = "usubjid", class = "control-label", "USUBJID"),
+            shiny::tags$div(
+              class = "subject-nav-row",
+              shiny::actionButton(
+                "usubjid_prev",
+                label = "",
+                icon = shiny::icon("arrow-left"),
+                title = "Previous subject"
+              ),
+              shiny::tags$div(
+                class = "subject-select-input",
+                shiny::selectInput(
+                  "usubjid",
+                  label = NULL,
+                  choices = usubjid_choices,
+                  selected = "all"
+                )
+              ),
+              shiny::actionButton(
+                "usubjid_next",
+                label = "",
+                icon = shiny::icon("arrow-right"),
+                title = "Next subject"
+              )
+            )
+          )
+        ),
+        shiny::column(
+          8,
+          shiny::div(
+            class = "subject-summary-col",
+            shiny::uiOutput("subject_summary")
+          )
+        )
+      )
+    },
+    shiny::plotOutput("main_plot", click = "plot_click", height = "500px"),
+    shiny::hr(),
+    shiny::h4("Selected observation"),
+    shiny::fluidRow(
+      shiny::column(
+        12,
+        shiny::conditionalPanel(
+          condition = "output.has_selection",
+          shiny::h5(shiny::textOutput("selection_info")),
+          shiny::div(class = "sdtm-table", shiny::uiOutput("source_table")),
+          shiny::uiOutput("ex_section"),
+          shiny::uiOutput("nif_section")
+        ),
+        shiny::conditionalPanel(
+          condition = "!output.has_selection",
+          shiny::p(shiny::em(
+            "Click a data point to display the source SDTM record."
+          ))
+        )
+      )
+    )
+  )
+
+  server <- function(input, output, session) {
+    selected_point <- shiny::reactiveVal(NULL)
+    selected_source <- shiny::reactiveVal(NULL)
+    selected_seq <- shiny::reactiveVal(NULL)
+    selected_info <- shiny::reactiveVal("")
+    selected_ex <- shiny::reactiveVal(NULL)
+    selected_ex_seq <- shiny::reactiveVal(NULL)
+    selected_nif_rows <- shiny::reactiveVal(NULL)
+    selected_nif_highlight <- shiny::reactiveVal(NULL)
+
+    reset_all <- function() {
+      selected_point(NULL)
+      selected_source(NULL)
+      selected_seq(NULL)
+      selected_info("")
+      selected_ex(NULL)
+      selected_ex_seq(NULL)
+      selected_nif_rows(NULL)
+      selected_nif_highlight(NULL)
+    }
+
+    reset_details <- function() {
+      selected_source(NULL)
+      selected_seq(NULL)
+      selected_info("")
+      selected_ex(NULL)
+      selected_ex_seq(NULL)
+      selected_nif_rows(NULL)
+      selected_nif_highlight(NULL)
+    }
+
+    if (has_usubjid) {
+      shiny::observeEvent(input$usubjid, { reset_all() }, ignoreInit = TRUE)
+
+      shiny::observeEvent(input$usubjid_prev, {
+        ids <- usubjid_subject_ids
+        if (length(ids) == 0) return()
+        cur <- input$usubjid
+        if (is.null(cur)) return()
+        cur <- as.character(cur)
+        if (cur == "all") {
+          new_val <- as.character(ids[length(ids)])
+        } else {
+          i <- match(cur, as.character(ids))
+          if (is.na(i)) return()
+          new_val <- if (i <= 1L) {
+            as.character(ids[length(ids)])
+          } else {
+            as.character(ids[i - 1L])
+          }
+        }
+        shiny::updateSelectInput(session, "usubjid", selected = new_val)
+      }, ignoreInit = TRUE)
+
+      shiny::observeEvent(input$usubjid_next, {
+        ids <- usubjid_subject_ids
+        if (length(ids) == 0) return()
+        cur <- input$usubjid
+        if (is.null(cur)) return()
+        cur <- as.character(cur)
+        if (cur == "all") {
+          new_val <- as.character(ids[1L])
+        } else {
+          i <- match(cur, as.character(ids))
+          if (is.na(i)) return()
+          new_val <- if (i >= length(ids)) {
+            as.character(ids[1L])
+          } else {
+            as.character(ids[i + 1L])
+          }
+        }
+        shiny::updateSelectInput(session, "usubjid", selected = new_val)
+      }, ignoreInit = TRUE)
+
+      output$subject_summary <- shiny::renderUI({
+        u <- input$usubjid
+        if (is.null(u) || u == "all") {
+          return(shiny::tags$p(
+            shiny::tags$em(
+              paste(
+                "Select a subject"
+              )
+            ),
+            class = "subject-summary text-muted"
+          ))
+        }
+        parts <- subject_attr_lookup[[u]]
+        if (is.null(parts) || length(parts) == 0) {
+          line <- paste0("ID: ", htmltools::htmlEscape(as.character(u)))
+          return(shiny::tags$p(class = "subject-summary", shiny::HTML(line)))
+        }
+        labels <- c(
+          ID = "ID", SEX = "SEX", AGE = "AGE", WEIGHT = "WEIGHT", DL = "DL"
+        )
+        ord <- intersect(c("ID", "SEX", "AGE", "WEIGHT", "DL"), names(parts))
+        pieces <- vapply(ord, function(nm) {
+          paste0(labels[nm], ": ", htmltools::htmlEscape(as.character(parts[[nm]])))
+        }, character(1))
+        line <- paste(pieces, collapse = " \u00b7 ")
+        shiny::tags$p(class = "subject-summary", shiny::HTML(line))
+      })
+    }
+
+    obs_data_r <- shiny::reactive({
+      shiny::req(input$plot_options)
+      d <- dplyr::filter(obs_data, .data$ANALYTE %in% input$analytes)
+      if (has_usubjid &&
+          !is.null(input$usubjid) &&
+          isTRUE(input$usubjid != "all")) {
+        d <- dplyr::filter(d, .data$USUBJID == input$usubjid)
+      }
+      if ("log_y" %in% input$plot_options) {
+        d <- dplyr::mutate(
+          d, DV = dplyr::case_when(.data$DV == 0 ~ NA, .default = .data$DV)
+        )
+      }
+      d
+    })
+
+    build_main_plot <- function(time_metric, show_lines, log_y) {
+      p <- obs_data_r() |>
+        dplyr::arrange(.data$GROUP, .data[[time_metric]]) |>
+        ggplot2::ggplot(ggplot2::aes(
+          x = .data[[time_metric]],
+          y = .data$DV,
+          group = .data$GROUP,
+          color = .data$COLOR
+        ))
+
+      if (isTRUE(show_lines)) {
+        p <- p + ggplot2::geom_line(na.rm = TRUE)
+      }
+
+      p <- p + ggplot2::geom_point(size = size, alpha = alpha, na.rm = TRUE)
+
+      sel <- selected_point()
+      if (!is.null(sel)) {
+        p <- p +
+          ggplot2::geom_point(
+            data = sel, size = size + 3, shape = 21, stroke = 2,
+            fill = NA, color = "black", na.rm = TRUE
+          )
+      }
+
+      if (!is.null(plot_data_set$facet)) {
+        if ("FACET" %in% names(obs_data) &&
+            length(unique(obs_data[["FACET"]])) > 1) {
+          p <- p + ggplot2::facet_wrap(~FACET, scales = scales)
+        }
+      }
+
+      if (isTRUE(log_y)) {
+        p <- p + ggplot2::scale_y_log10()
+      }
+
+      p <- p +
+        ggplot2::theme_bw(base_size) +
+        ggplot2::theme(
+          legend.position = if (length(plot_data_set$color) > 0) {
+            "bottom"
+          } else {
+            "none"
+          }
+        ) +
+        ggplot2::ggtitle(plot_title) +
+        ggplot2::labs(
+          x = time_metric,
+          y = y_label,
+          color = nif::nice_enumeration(plot_data_set$color)
+        )
+
+      suppressWarnings(p)
+    }
+
+    output$main_plot <- shiny::renderPlot({
+      shiny::req(input$time_metric)
+      shiny::req(input$plot_options)
+      build_main_plot(
+        time_metric = input$time_metric,
+        show_lines = "show_lines" %in% input$plot_options,
+        log_y = "log_y" %in% input$plot_options
+      )
+    })
+
+    find_related_ex <- function(clicked_row) {
+      usubjid <- clicked_row$USUBJID[1]
+      parent <- clicked_row$PARENT[1]
+      obs_time <- clicked_row$TIME[1]
+
+      if (is.na(parent) || is.na(obs_time)) return(NULL)
+
+      admins <- nif[nif$EVID == 1 &
+                      nif$USUBJID == usubjid &
+                      nif$ANALYTE == parent &
+                      !is.na(nif$TIME) &
+                      nif$TIME <= obs_time, , drop = FALSE]
+
+      if (nrow(admins) == 0) return(NULL)
+
+      admins <- admins[order(admins$TIME, decreasing = TRUE), , drop = FALSE]
+      closest_admin <- admins[1, , drop = FALSE]
+
+      if (!"SRC_SEQ" %in% names(closest_admin) ||
+          is.na(closest_admin$SRC_SEQ[1])) {
+        return(NULL)
+      }
+
+      closest_admin$SRC_SEQ[1]
+    }
+
+    apply_source_lookup <- function(clicked_row, src_domain, src_seq) {
+      src_testcd <- if ("SRC_TESTCD" %in% names(clicked_row)) {
+        clicked_row$SRC_TESTCD[1]
+      } else {
+        NULL
+      }
+      tryCatch({
+        result <- lookup_domain_neighbors(
+          sdtm, src_domain,
+          clicked_row$USUBJID[1], src_seq,
+          src_testcd
+        )
+
+        if (is.null(result$data)) {
+          selected_source(
+            data.frame(Note = paste0(
+              "No matching record found in ", src_domain,
+              " for ", result$seq_col, " = ", src_seq
+            ))
+          )
+          selected_seq(NULL)
+        } else {
+          selected_source(result$data)
+          selected_seq(src_seq)
+        }
+
+        selected_info(paste0(
+          "Subject ", clicked_row$USUBJID[1],
+          " | ", clicked_row$ANALYTE[1],
+          " | ", input$time_metric, " = ",
+          round(clicked_row[[input$time_metric]][1], 2),
+          " | DV = ", round(clicked_row$DV[1], 4),
+          " | Source: ", src_domain, " (", result$seq_col, " = ", src_seq, ")"
+        ))
+      }, error = function(e) {
+        selected_source(
+          data.frame(Note = paste0("Error looking up source: ", e$message))
+        )
+        selected_seq(NULL)
+        selected_info(paste0("Domain: ", src_domain, " (lookup failed)"))
+      })
+    }
+
+    apply_ex_lookup <- function(clicked_row) {
+      tryCatch({
+        ex_seq <- find_related_ex(clicked_row)
+        if (!is.null(ex_seq) && has_domain(sdtm, "ex")) {
+          ex_result <- lookup_domain_neighbors(
+            sdtm, "EX",
+            clicked_row$USUBJID[1], ex_seq,
+            src_testcd = NULL
+          )
+          selected_ex(ex_result$data)
+          selected_ex_seq(ex_seq)
+        } else {
+          selected_ex(NULL)
+          selected_ex_seq(NULL)
+        }
+      }, error = function(e) {
+        selected_ex(NULL)
+        selected_ex_seq(NULL)
+      })
+    }
+
+    apply_nif_highlight <- function(clicked_row) {
+      tryCatch({
+        subj_nif <- nif[nif$USUBJID == clicked_row$USUBJID[1], , drop = FALSE]
+        subj_nif <- subj_nif[order(subj_nif$TIME), , drop = FALSE]
+
+        src_domain <- if ("SRC_DOMAIN" %in% names(clicked_row)) clicked_row$SRC_DOMAIN[1] else NA_character_
+        src_seq <- if ("SRC_SEQ" %in% names(clicked_row)) clicked_row$SRC_SEQ[1] else NA
+
+        idx <- NULL
+        if (!is.na(src_domain) &&
+            !is.na(src_seq) &&
+            "SRC_DOMAIN" %in% names(subj_nif) &&
+            "SRC_SEQ" %in% names(subj_nif)) {
+          match_idx <- which(
+            subj_nif$EVID == 0 &
+              !is.na(subj_nif$SRC_DOMAIN) & subj_nif$SRC_DOMAIN == src_domain &
+              !is.na(subj_nif$SRC_SEQ) & subj_nif$SRC_SEQ == src_seq &
+              subj_nif$ANALYTE == clicked_row$ANALYTE[1]
+          )
+          if (length(match_idx) > 0) idx <- match_idx[1]
+        }
+
+        if (is.null(idx)) {
+          obs_candidates <- which(
+            subj_nif$EVID == 0 &
+              subj_nif$ANALYTE == clicked_row$ANALYTE[1] &
+              !is.na(subj_nif$TIME)
+          )
+
+          if (length(obs_candidates) == 0) {
+            selected_nif_rows(NULL)
+            selected_nif_highlight(NULL)
+            return()
+          }
+
+          target_time <- if ("TIME" %in% names(clicked_row)) {
+            clicked_row$TIME[1]
+          } else if (input$time_metric %in% names(clicked_row)) {
+            clicked_row[[input$time_metric]][1]
+          } else {
+            NA
+          }
+          if (is.na(target_time)) {
+            idx <- obs_candidates[1]
+          } else {
+            idx <- obs_candidates[which.min(abs(subj_nif$TIME[obs_candidates] - target_time))]
+          }
+        }
+
+        obs_time <- subj_nif$TIME[idx]
+        admin_idx <- which(subj_nif$EVID == 1 & subj_nif$TIME <= obs_time)
+        start_idx <- if (length(admin_idx) > 0) max(admin_idx) else 1L
+        neighbor_idx <- seq(start_idx, idx)
+        nif_subset <- subj_nif[neighbor_idx, , drop = FALSE]
+        hl <- rep(FALSE, length(neighbor_idx))
+        hl[length(neighbor_idx)] <- TRUE
+        selected_nif_rows(nif_subset)
+        selected_nif_highlight(hl)
+      }, error = function(e) {
+        selected_nif_rows(NULL)
+        selected_nif_highlight(NULL)
+      })
+    }
+
+    shiny::observeEvent(input$plot_click, {
+      clicked <- shiny::nearPoints(
+        obs_data_r(), input$plot_click,
+        xvar = input$time_metric, yvar = "DV",
+        threshold = 10, maxpoints = 1
+      )
+
+      if (nrow(clicked) == 0) {
+        reset_all()
+        return()
+      }
+
+      selected_point(clicked[1, , drop = FALSE])
+
+      clicked_row <- clicked[1, , drop = FALSE]
+
+      src_domain <- if ("SRC_DOMAIN" %in% names(clicked_row)) clicked_row$SRC_DOMAIN[1] else NA_character_
+      src_seq <- if ("SRC_SEQ" %in% names(clicked_row)) clicked_row$SRC_SEQ[1] else NA
+
+      if (isTRUE(can_lookup_sdtm)) {
+        if (is.na(src_domain) || src_domain == "IMPORT") {
+          reset_details()
+          selected_source(
+            data.frame(Note = "Source: imported data (no SDTM source record)")
+          )
+          selected_info(paste0(
+            "Subject ", clicked_row$USUBJID[1],
+            " | ", clicked_row$ANALYTE[1],
+            " | ", input$time_metric, " = ",
+            round(clicked_row[[input$time_metric]][1], 2),
+            " | DV = ", round(clicked_row$DV[1], 4),
+            " | Source: IMPORT"
+          ))
+          return()
+        }
+
+        if (is.na(src_seq)) {
+          reset_details()
+          selected_source(
+            data.frame(Note = "SRC_SEQ is NA; cannot look up source record.")
+          )
+          selected_info(paste0(
+            "Subject ", clicked_row$USUBJID[1],
+            " | ", clicked_row$ANALYTE[1],
+            " | Domain: ", src_domain
+          ))
+          return()
+        }
+
+        apply_source_lookup(clicked_row, src_domain, src_seq)
+        apply_ex_lookup(clicked_row)
+        apply_nif_highlight(clicked_row)
+      } else {
+        reset_details()
+        selected_info(paste0(
+          "Subject ", clicked_row$USUBJID[1],
+          " | ", clicked_row$ANALYTE[1],
+          " | ", input$time_metric, " = ",
+          round(clicked_row[[input$time_metric]][1], 2),
+          " | DV = ", round(clicked_row$DV[1], 4),
+          " | Source: unavailable (no SDTM lookup / missing SRC fields)"
+        ))
+        apply_nif_highlight(clicked_row)
+      }
+    })
+
+    output$has_selection <- shiny::reactive({
+      !is.null(selected_source()) || !is.null(selected_nif_rows())
+    })
+    shiny::outputOptions(output, "has_selection", suspendWhenHidden = FALSE)
+
+    output$selection_info <- shiny::renderText({
+      selected_info()
+    })
+
+    output$source_table <- shiny::renderUI({
+      shiny::req(selected_source())
+      df <- selected_source()
+      sel_seq <- selected_seq()
+      sp <- selected_point()
+      src_dom <- if (!is.null(sp) && "SRC_DOMAIN" %in% names(sp)) sp$SRC_DOMAIN[1] else NA_character_
+      seq_col <- if (!is.na(src_dom)) paste0(toupper(src_dom), "SEQ") else NULL
+
+      render_sdtm_table(df, seq_col, sel_seq)
+    })
+
+    output$ex_section <- shiny::renderUI({
+      ex_data <- selected_ex()
+      if (is.null(ex_data)) return(NULL)
+
+      shiny::tagList(
+        shiny::hr(),
+        shiny::h4("Related administration (EX)"),
+        shiny::div(
+          class = "sdtm-table",
+          render_sdtm_table(ex_data, "EXSEQ", selected_ex_seq())
+        )
+      )
+    })
+
+    output$nif_section <- shiny::renderUI({
+      nif_data <- selected_nif_rows()
+      if (is.null(nif_data)) return(NULL)
+
+      admin_rows <- if ("EVID" %in% names(nif_data)) nif_data$EVID == 1 else rep(FALSE, nrow(nif_data))
+
+      shiny::tagList(
+        shiny::hr(),
+        shiny::h4("NIF record"),
+        shiny::div(
+          class = "sdtm-table",
+          render_highlight_table(nif_data, selected_nif_highlight(), admin_rows)
+        )
+      )
+    })
+  }
+
+  shiny::shinyApp(ui, server)
+}

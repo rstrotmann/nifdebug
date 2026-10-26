@@ -81,7 +81,7 @@ nif_debug <- function(
   }
   can_lookup_sdtm <- !is.null(sdtm) && inherits(sdtm, "sdtm") && has_sdtm_source_fields
 
-  plot_data_set <- nif::make_plot_data_set(
+  plot_data_set <- nif:::make_plot_data_set(
     nif, analyte, dose, time, color, min_time, max_time, cfb, dose_norm, facet
   )
 
